@@ -6,7 +6,7 @@ DEBUG_FLAGS = -g -O0
 BIN_DIR = bin
 
 DEBUG_DIR = debug
-DEBUG_TARGET = $(BIN_DIR)/$(DEBUG_DIR)/todo-db.exe
+DEBUG_TARGET = $(BIN_DIR)/$(DEBUG_DIR)/tdb.exe
 
 SRCS = main.c
 
@@ -17,3 +17,5 @@ $(DEBUG_TARGET): $(SRCS)
 
 clean:
 	rmdir /Q /S $(BIN_DIR)
+
+all: clean debug
