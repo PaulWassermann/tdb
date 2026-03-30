@@ -7,12 +7,21 @@
 #include <time.h>
 #include <windows.h>
 
+#define LOG_FORMAT "[%s][%s][%s] Line %d :: "
+#define LOG_ARGS(TAG) TAG, __FILE__, __FUNCTION__, __LINE__
+#define LOG_INFO(format, ...) \
+    fprintf(stdout, LOG_FORMAT format, LOG_ARGS("INFO"), __VA_ARGS__)
+#define LOG_WARNING(format, ...) \
+    fprintf(stderr, LOG_FORMAT format, LOG_ARGS("WARNING"), __VA_ARGS__)
+#define LOG_ERROR(format, ...) \
+    fprintf(stderr, LOG_FORMAT format, LOG_ARGS("ERROR"), __VA_ARGS__)
+
 #define DEBUG_TYPE(t) (printf("Sizeof type %s: %zu bytes\n", #t, sizeof(t)))
 #define MIN(a, b) (a) < (b) ? (a) : (b)
-#define TODO(message) do {                                               \
-    fprintf(stderr, "%s:%d -- TODO: %s\n", __FILE__, __LINE__, message); \
-    exit(EXIT_FAILURE);                                                  \
-} while (0) 
+#define TODO(message) do {            \
+    LOG_ERROR("TODO: %s\n", message); \
+    exit(EXIT_FAILURE);               \
+} while (0)
 #define UNUSED(value) (void)(value)
 
 #define LARGE_BUFFER 2048
@@ -20,13 +29,22 @@
 // FUNCTIONS PROTOTYPES
 typedef struct StringView StringView;
 StringView sv(const char *str);
+StringView sv_chop_left(StringView *sv, size_t n);
+StringView sv_chop_right(StringView *sv, size_t n);
+StringView sv_copy(StringView *sv);
+bool sv_endswith(StringView *sv, const char *suffix);
+bool sv_remove_prefix(StringView *sv, const char *prefix);
+bool sv_remove_suffix(StringView *sv, const char *suffix);
 bool sv_startswith(StringView *sv, const char *prefix);
+StringView sv_trim(StringView sv);
+StringView sv_trim_left(StringView sv);
+StringView sv_trim_right(StringView sv);
 
 typedef struct Task Task;
 typedef struct TaskList TaskList;
 void generate_task_id(char *buffer);
 void initialize_task(Task *task, int priority, const char *title, const char *body);
-void load_task_from_file(Task *task, char *filename);
+bool load_task_from_file(Task *task, char *filename);
 void print_task(Task *task);
 void print_tasks(TaskList *tasks);
 void write_task(Task *task);
@@ -37,6 +55,9 @@ void walk_directory(char *path);
 char read_space(FILE *stream);
 
 // STRING VIEW RELATED CODE
+#define SV_FMT "%.*s"
+#define SV_ARGS(sv) (int) (sv).count, (sv).data
+
 typedef struct StringView {
     const char *data;
     size_t count;
@@ -49,13 +70,83 @@ StringView sv(const char *str) {
     };
 }
 
-bool sv_startswith(StringView *sv, const char *prefix) {
-    if (strlen(prefix) > sv->count) return false;
+StringView sv_chop_left(StringView *sv, size_t n) {
+    n = MIN(sv->count, n);
 
-    for (size_t i = 0; i < sv->count; i++) {
-        if (sv->data[i] != prefix[i]) return false;
+    sv->data += n;
+    sv->count -= n;
+
+    return sv_copy(sv);
+}
+
+StringView sv_chop_right(StringView *sv, size_t n) {
+    n = MIN(sv->count, n);
+
+    sv->count -= n;
+
+    return sv_copy(sv);
+}
+
+StringView sv_copy(StringView *sv) {
+    return (StringView) {
+        .data = sv->data,
+        .count = sv->count
+    };
+}
+
+bool sv_endswith(StringView *sv, const char *suffix) {
+    if (strlen(suffix) > sv->count)  return false;
+
+    for (size_t i = 0; i < strlen(suffix); i++) {
+        if (sv->data[sv->count - i - 1] != suffix[strlen(suffix) - i - 1])  return false;
     }
     return true;
+}
+
+bool sv_remove_prefix(StringView *sv, const char *prefix) {
+    if (sv_startswith(sv, prefix)) {
+        sv_chop_left(sv, strlen(prefix));
+        return true;
+    }
+    return false;
+}
+
+bool sv_remove_suffix(StringView *sv, const char *suffix) {
+    if (sv_endswith(sv, suffix)) {
+        sv_chop_right(sv, strlen(suffix));
+        return true;
+    }
+    return false;
+}
+
+bool sv_startswith(StringView *sv, const char *prefix) {
+    if (strlen(prefix) > sv->count)  return false;
+
+    for (size_t i = 0; i < strlen(prefix); i++) {
+        if (sv->data[i] != prefix[i])  return false;
+    }
+    return true;
+}
+
+StringView sv_trim(StringView sv) {
+    return sv_trim_left(sv_trim_right(sv));
+}
+
+StringView sv_trim_left(StringView sv) {
+    StringView sv_out = sv_copy(&sv);
+    while (sv_out.count > 0 && isspace(sv_out.data[0])) {
+        sv_out.data++;
+        sv_out.count--;
+    }
+    return sv_out;
+}
+
+StringView sv_trim_right(StringView sv) {
+    StringView sv_out = sv_copy(&sv);
+    while (sv_out.count > 0 && isspace(sv_out.data[sv_out.count - 1])) {
+        sv_out.count--;
+    }
+    return sv_out;
 }
 
 // TASK RELATED CODE
@@ -64,13 +155,13 @@ bool sv_startswith(StringView *sv, const char *prefix) {
 #define STATUS_MAX_LENGTH 8
 #define BODY_MAX_LENGTH   1024
 
-char *TEMPLATE = "# %s\n(#%s)\n\nPRIORITY: %d\nSTATUS: OPEN\n\n%s\n";
+char *TEMPLATE = "# %s\n(%s)\n\nPRIORITY: %d\nSTATUS: OPEN\n\n%s\n";
 
 typedef struct Task {
     char id[ID_MAX_LENGTH];
     int priority;
     char title[TITLE_MAX_LENGTH];
-    // char status[STATUS_MAX_LENGTH];
+    char status[STATUS_MAX_LENGTH];
     char body[BODY_MAX_LENGTH];
 } Task;
 
@@ -85,7 +176,9 @@ void generate_task_id(char *buffer) {
     strftime(buffer, ID_MAX_LENGTH, "%Y%m%d-%H%M%S", gmtime_info);
 }
 
-void initialize_task(Task *task, int priority, const char *title, const char *body) {
+void initialize_task(
+        Task *task, int priority, const char *title, const char *body
+) {
     char id[ID_MAX_LENGTH];
     generate_task_id(id);
 
@@ -95,26 +188,75 @@ void initialize_task(Task *task, int priority, const char *title, const char *bo
     strncpy(task->body, body, BODY_MAX_LENGTH);
 }
 
-void load_task_from_file(Task *task, char *filename) {
+bool load_task_from_file(Task *task, char *filename) {
     FILE *f = fopen(filename, "r");
 
     if (f == NULL) {
-        fprintf(stderr, "Cannot open file '%s'", filename);
+        LOG_ERROR("Cannot open file '%s'", filename);
         exit(EXIT_FAILURE);
     }
 
+    char buffer[LARGE_BUFFER] = {0};
 
-    int n = fscanf(f, TEMPLATE, task->title, task->id, task->priority, task->body);
+    // Parse title
+    fgets(buffer, LARGE_BUFFER, f);
+    StringView title_sv = sv_trim(sv(buffer));
+
+    if (!sv_remove_prefix(&title_sv, "# ")) {
+        LOG_ERROR("Couldn't load title from '%s'\n", filename);
+        return false;
+    }
+
+    if (title_sv.count > TITLE_MAX_LENGTH) {
+        LOG_WARNING(
+            "Truncating title for file '%s' (max length: %d; received: %zu)\n",
+            filename, TITLE_MAX_LENGTH, title_sv.count
+        );
+    }
+
+    strncpy(task->title, title_sv.data, title_sv.count);
+
+    // Parse id
+    fgets(buffer, LARGE_BUFFER, f);
+    StringView id_sv = sv_trim(sv(buffer));
+
+    if (!sv_remove_prefix(&id_sv, "(") || !sv_remove_suffix(&id_sv, ")")) {
+        LOG_ERROR("Couldn't load id from '%s'\n", filename);
+        return false;
+    }
+
+    if (title_sv.count > ID_MAX_LENGTH) {
+        LOG_WARNING(
+            "Truncating id for file '%s' (max length: %d; received: %zu)\n",
+            filename, ID_MAX_LENGTH, title_sv.count
+        );
+    }
+
+    strncpy(task->id, id_sv.data, id_sv.count);
+
+    // Parse priority
+    read_space(f);
+    fgets(buffer, LARGE_BUFFER, f);
+    StringView priority_sv = sv_trim(sv(buffer));
+
+    if (!sv_remove_prefix(priority_sv, "PRIORITY:")) {
+        LOG_ERROR("Couldn't load priority from '%s'\n", filename);
+        return false;
+    }
+
+    int priority;
+    // Parse status
+    // Parse body
+    print_task(task);
+
+    TODO("need to finish implementing task loading logic");
+
     fclose(f);
-
-    if (n != 4) {
-        fprintf(stderr, "Couldn't parse file '%s'. Parsed %d elements.\n", filename, n);
-        exit(EXIT_FAILURE);
-    }
+    return true;
 }
 
 void print_task(Task *task) {
-    printf("Title:    %s (#%s)\n", task->title, task->id);
+    printf("Title:    %s\n(%s)\n", task->title, task->id);
     printf("Priority: %d\n\n", task->priority);
     printf("%s\n", task->body);
 }
@@ -126,8 +268,6 @@ void print_tasks(TaskList *tasks) {
 }
 
 void write_task(Task *task) {
-    char *template = "# %s\n(#%s)\n\nPRIORITY: %d\nSTATUS: OPEN\n\n%s\n";
-
     char dirname[LARGE_BUFFER];
     sprintf(dirname, "tasks/%s", task->id);
     portable_mkdir(dirname);
@@ -136,7 +276,7 @@ void write_task(Task *task) {
     sprintf(filename, "tasks/%s/TASK.md", task->id);
 
     FILE *f = fopen(filename, "w");
-    fprintf(f, template, task->title, task->id, task->priority, task->body);
+    fprintf(f, TEMPLATE, task->title, task->id, task->priority, task->body);
     fclose(f);
 }
 
@@ -157,8 +297,8 @@ bool directory_exists(char *path) {
 int portable_mkdir(char *dirname) {
 #ifdef _WIN32
     if (!CreateDirectory(dirname, NULL)) {
-	fprintf(stderr, "Could not write directory '%s'\n", dirname);
-	return 1;
+        LOG_ERROR("Could not write directory '%s'\n", dirname);
+        return 1;
     }
     return 0;
 #else
@@ -174,7 +314,7 @@ void walk_directory(char *path) {
     h = FindFirstFile(path, &fd);
 
     if (h == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "Couldn't find files in %s\n", path);
+        LOG_ERROR("Couldn't find files in %s\n", path);
     }
 
     do {
@@ -191,7 +331,12 @@ void walk_directory(char *path) {
 char read_space(FILE *stream) {
     char c;
 
-    while (isspace((c = fgetc(stream)))) {
+    while (isspace((c = fgetc(stream)))) {};
+
+    // Move cursor one character back to allow caller to process all 
+    // non-whitespace characters
+    if (fseek(stream, 0, SEEK_CUR) != 0) {
+        LOG_ERROR("Could not deplace cursor in current stream\n");
     }
 
     return c;
@@ -207,8 +352,8 @@ int main(int argc, char **argv) {
 
     if (strcmp(command, "list") == 0) {
         printf("List tasks...\n");
-        Task task;
-        load_task_from_file(&task, "tasks/20260315-223329/TASK.md");
+        Task task = {0};
+        load_task_from_file(&task, "tasks/20260330-195623/TASK.md");
         print_task(&task);
         // char files[256];
         // walk_directory("tasks", files);
