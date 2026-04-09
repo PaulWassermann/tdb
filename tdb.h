@@ -1,3 +1,6 @@
+#ifndef TDB_H
+#define TDB_H
+
 #define _CRT_SECURE_NO_WARNINGS
 
 #include <stdbool.h>
@@ -59,6 +62,10 @@ int portable_mkdir(char *dirname);
 void walk_directory(char *path);
 char read_space(FILE *stream);
 void *safe_malloc(size_t size, char *file, char *function, int line);
+
+#endif // TDB_H
+
+#ifdef TDB_IMPLEMENTATION
 
 // STRING VIEW RELATED CODE
 #define SV_FMT "%.*s"
@@ -383,4 +390,5 @@ void *safe_malloc(size_t size, char *file, char *function, int line) {
     return ptr;
 }
 
+#endif // TDB_IMPLEMENTATION
 
