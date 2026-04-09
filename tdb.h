@@ -1,8 +1,6 @@
 #ifndef TDB_H
 #define TDB_H
 
-#define _CRT_SECURE_NO_WARNINGS
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,7 +19,7 @@
 
 #define DEBUG_TYPE(t) (printf("Sizeof type %s: %zu bytes\n", #t, sizeof(t)))
 #define MIN(a, b) (a) < (b) ? (a) : (b)
-#define SAFE_MALLOC(size) safe_malloc(size, __FILE__, __FUNCTION__, __LINE__)
+#define SAFE_MALLOC(size) safe_malloc(size, __FILE__, (char *) __FUNCTION__, __LINE__)
 #define TODO(message) do {            \
     LOG_ERROR("TODO: %s\n", message); \
     exit(EXIT_FAILURE);               \
@@ -45,8 +43,7 @@ StringView sv_trim(StringView sv);
 StringView sv_trim_left(StringView sv);
 StringView sv_trim_right(StringView sv);
 
-typedef enum Status Status;
-Status str_to_status(char *status);
+bool is_status_valid(char *status);
 
 typedef struct Task Task;
 typedef struct TaskList TaskList;
@@ -171,14 +168,10 @@ StringView sv_trim_right(StringView sv) {
 }
 
 // STATUS RELATED CODE
-typedef enum Status {
-    OPEN   = 0,
-    CLOSED = 1
-} Status;
-
-Status str_to_status(char *status) {
-    if (strcmp(status, "OPEN") == 0) return OPEN;
-    if (strcmp(status, "CLOSED") == 0) return CLOSED;
+bool is_status_valid(char *status) {
+    if (strcmp(status, "OPEN") == 0) return true;
+    if (strcmp(status, "CLOSED") == 0) return true;
+    return false;
 }
 
 // TASK RELATED CODE
@@ -271,7 +264,7 @@ bool load_task_from_file(Task *task, char *filename) {
     fgets(buffer, LARGE_BUFFER, f);
     StringView priority_sv = sv_trim(sv(buffer));
 
-    if (!sv_remove_prefix(&priority_sv, "PRIORITY:")) {
+    if (!sv_remove_prefix(&priority_sv, "PRIORITY: ")) {
         LOG_ERROR("Couldn't load priority from '%s'\n", filename);
         return false;
     }
@@ -281,6 +274,18 @@ bool load_task_from_file(Task *task, char *filename) {
     task->priority = priority;
 
     // Parse status
+    fgets(buffer, LARGE_BUFFER, f);
+    StringView status_sv = sv_trim(sv(buffer));
+    if (!sv_remove_prefix(&status_sv, "STATUS: ")) {
+        LOG_ERROR("Couldn't load status from '%s'\n", filename);
+    }
+
+    if (!is_status_valid(sv_to_cstr(status_sv))) {
+        LOG_ERROR("Status '"SV_FMT"' is not valid (from '%s')\n", SV_ARGS(status_sv), filename);
+    }
+
+    strncpy(task->status, status_sv.data, status_sv.count); 
+
     // Parse body
     print_task(task);
 
@@ -291,8 +296,9 @@ bool load_task_from_file(Task *task, char *filename) {
 }
 
 void print_task(Task *task) {
-    printf("Title:    %s\n(%s)\n", task->title, task->id);
-    printf("Priority: %d\n\n", task->priority);
+    printf("Title: %s\n(%s)\n\n", task->title, task->id);
+    printf("Priority: %d\n", task->priority);
+    printf("Status: %s\n\n", task->status);
     printf("%s\n", task->body);
 }
 

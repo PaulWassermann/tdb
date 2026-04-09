@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -13,9 +15,8 @@ int main(int argc, char **argv) {
     char *command = argv[1];
 
     if (strcmp(command, "list") == 0) {
-        printf("List tasks...\n");
         Task task = {0};
-        load_task_from_file(&task, "tasks/20260330-195623/TASK.md");
+        load_task_from_file(&task, "tasks/20260409-073245/TASK.md");
         print_task(&task);
         // char files[256];
         // walk_directory("tasks", files);
